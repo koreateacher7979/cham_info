@@ -8,18 +8,14 @@
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap" rel="stylesheet">
     
-    <!-- Firebase SDK -->
+    <!-- Firebase SDK (최신 11.6.1 버전 사용 및 안전 초기화) -->
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, onSnapshot, serverTimestamp, doc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp, doc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const app = Object.keys(firebaseConfig).length > 0 ? initializeApp(firebaseConfig) : null;
-        const auth = app ? getAuth(app) : null;
-        const db = app ? getFirestore(app) : null;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'chammaeum-club';
-
+        let app = null, auth = null, db = null;
+        let appId = 'chammaeum-club';
         let isAdmin = false;
         let sheetAdminPassword = "1234"; 
         let pendingGalleryFile = null; 
@@ -27,15 +23,29 @@
         // 웹앱 URL
         const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyGs1OjmnzdTmhcWLC3JTKbBZ6kawgJ1JaiiVdxOo8olKuo64WiFSbjYHXnDnkYYWo/exec";
 
+        // 1. Firebase 안전 초기화 (무한 로딩 스크립트 충돌 방지)
+        try {
+            if (typeof __app_id !== 'undefined' && __app_id) appId = __app_id;
+            
+            let configObj = {};
+            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+                configObj = typeof __firebase_config === 'string' ? JSON.parse(__firebase_config) : __firebase_config;
+            }
+            
+            if (Object.keys(configObj).length > 0) {
+                app = initializeApp(configObj);
+                auth = getAuth(app);
+                db = getFirestore(app);
+            }
+        } catch (error) {
+            console.error("Firebase 초기화 에러:", error);
+        }
+
+        // 전역 접근 설정
         window.db = db;
         window.appId = appId;
-        window.addDoc = addDoc;
-        window.collection = collection;
-        window.serverTimestamp = serverTimestamp;
-        window.doc = doc;
-        window.setDoc = setDoc;
-
-        // 알림 메시지 표시
+        
+        // 자체 알림 메시지 (alert 대체)
         window.showNotification = function(msg, isError = false) {
             const noti = document.getElementById('notification');
             noti.innerText = msg;
@@ -47,17 +57,17 @@
             }, 3500);
         };
 
-        // 데이터베이스 에러 핸들러 (무한 로딩 제거)
-        window.handleDbError = function() {
+        // 데이터베이스 에러 시 로딩 아이콘 삭제 처리
+        window.handleDbError = function(customMsg) {
             const galleryContainer = document.getElementById('gallery-grid');
             if (galleryContainer && galleryContainer.innerHTML.includes('fa-spin')) {
-                galleryContainer.innerHTML = '<p class="col-span-full text-center text-gray-500 py-10">서버 연결이 지연되고 있습니다.<br>네트워크를 확인하거나 잠시 후 다시 접속해주세요.</p>';
+                galleryContainer.innerHTML = `<p class="col-span-full text-center text-gray-500 py-10">${customMsg || '데이터베이스를 불러올 수 없습니다.<br>네트워크를 확인해주세요.'}</p>`;
             }
         };
 
-        // 초기화
+        // 2. 초기 로드 및 인증 로직 (타임아웃 적용)
         window.addEventListener('DOMContentLoaded', () => {
-            fetchExternalData();
+            window.fetchExternalData();
 
             if (auth && db) {
                 const initAuth = async () => {
@@ -66,12 +76,11 @@
                             ? signInWithCustomToken(auth, __initial_auth_token)
                             : signInAnonymously(auth);
                         
-                        // 인증 과정 5초 타임아웃
                         const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("인증 지연")), 5000));
                         await Promise.race([authPromise, timeoutPromise]);
                     } catch (error) {
                         console.error("Auth error:", error);
-                        window.handleDbError();
+                        window.handleDbError("보안 인증이 지연되고 있습니다.");
                     }
                 };
                 
@@ -82,25 +91,28 @@
                         loadGallery();
                         loadHeroImage();
                     } else {
-                        window.handleDbError();
+                        window.handleDbError("인증되지 않은 사용자입니다.");
                     }
                 });
             } else {
-                window.handleDbError();
+                window.handleDbError("현재 환경에서 클라우드 데이터베이스를 사용할 수 없습니다.<br>(미리보기 외부에서는 정상 작동합니다.)");
             }
         });
 
-        // 이미지 압축 (로딩 멈춤 방지 최적화)
+        // 3. 압축 알고리즘 강화 (10초 타임아웃 멈춤 방지)
         window.resizeImage = function(file, maxSize) {
             return new Promise((resolve, reject) => {
                 if (!file) {
                     reject(new Error("파일이 없습니다."));
                     return;
                 }
+                const timeoutId = setTimeout(() => reject(new Error("이미지 처리 시간 초과")), 10000);
                 const reader = new FileReader();
+                
                 reader.onload = (e) => {
                     const img = new Image();
                     img.onload = () => {
+                        clearTimeout(timeoutId);
                         try {
                             const canvas = document.createElement('canvas');
                             let width = img.width;
@@ -121,21 +133,26 @@
                             canvas.height = height;
                             const ctx = canvas.getContext('2d');
                             ctx.drawImage(img, 0, 0, width, height);
-                            // 화질 0.5로 고정하여 용량 대폭 축소 (무한로딩 방지)
-                            resolve(canvas.toDataURL('image/jpeg', 0.5));
+                            resolve(canvas.toDataURL('image/jpeg', 0.6));
                         } catch(err) {
                             reject(new Error("이미지 처리 실패"));
                         }
                     };
-                    img.onerror = () => reject(new Error("이미지 로드 실패"));
+                    img.onerror = () => {
+                        clearTimeout(timeoutId);
+                        reject(new Error("이미지 로드 실패"));
+                    };
                     img.src = e.target.result;
                 };
-                reader.onerror = () => reject(new Error("파일 읽기 실패"));
+                reader.onerror = () => {
+                    clearTimeout(timeoutId);
+                    reject(new Error("파일 읽기 실패"));
+                };
                 reader.readAsDataURL(file);
             });
         };
 
-        // 대문 사진 로드
+        // 4. 대문 사진 로드 (단일 문서)
         function loadHeroImage() {
             if (!db) return;
             const heroDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'hero', 'main');
@@ -149,7 +166,7 @@
             }, (error) => console.error("Hero load error:", error));
         }
 
-        // 갤러리 로드 (타임아웃 적용)
+        // 5. 갤러리 로드 (8초 이상 응답 없으면 로딩 강제 종료)
         function loadGallery() {
             const galleryContainer = document.getElementById('gallery-grid');
             if (!db) {
@@ -157,18 +174,16 @@
                 return;
             }
             
-            // 5초 지나도 스피너가 돌고 있으면 강제 에러 메시지
-            let isLoaded = false;
-            setTimeout(() => {
-                if (!isLoaded && galleryContainer.innerHTML.includes('fa-spin')) {
-                    window.handleDbError();
+            const timeoutId = setTimeout(() => {
+                if (galleryContainer && galleryContainer.innerHTML.includes('fa-spin')) {
+                    window.handleDbError("서버 응답이 지연되고 있습니다. 잠시 후 다시 시도해주세요.");
                 }
-            }, 5000);
+            }, 8000);
 
             const galleryRef = collection(db, 'artifacts', appId, 'public', 'data', 'gallery');
             
             onSnapshot(galleryRef, (snapshot) => {
-                isLoaded = true;
+                clearTimeout(timeoutId);
                 galleryContainer.innerHTML = '';
                 
                 if (snapshot.empty) {
@@ -204,7 +219,7 @@
                     galleryContainer.appendChild(imgEl);
                 });
             }, (error) => {
-                isLoaded = true;
+                clearTimeout(timeoutId);
                 console.error("Gallery load error:", error);
                 galleryContainer.innerHTML = '<p class="col-span-full text-center text-red-500 py-10">사진을 불러오는데 실패했습니다.</p>';
             });
@@ -283,7 +298,7 @@
             }
         };
 
-        // 대문 사진 업로드 (상태 텍스트 추가 & 타임아웃 8초 제한)
+        // 6. 대문 사진 업로드 (덮어쓰기 영구 보존 & 10초 강제 에러 처리)
         window.handleHeroUpload = async function(event) {
             const file = event.target.files[0];
             if (!file || !db) return;
@@ -295,25 +310,27 @@
             uploadBtn.style.pointerEvents = 'none';
 
             try {
-                if (auth && !auth.currentUser) throw new Error("인증되지 않았습니다. 새로고침 해주세요.");
+                if (auth && !auth.currentUser) throw new Error("네트워크 연결이 끊겼습니다.");
 
-                const base64Image = await window.resizeImage(file, 800); 
+                const base64Image = await window.resizeImage(file, 1000); 
                 uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>전송 중...';
 
+                // 'main' 이라는 단일 문서에 덮어쓰기 (영구 유지 보장)
                 const heroDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'hero', 'main');
                 const uploadPromise = setDoc(heroDocRef, {
                     imageUrl: base64Image,
-                    timestamp: window.serverTimestamp()
+                    timestamp: serverTimestamp()
                 });
 
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("서버 응답 지연 (네트워크 확인)")), 8000));
+                // 10초 이상 응답 없으면 강제 에러
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("응답 시간 초과")), 10000));
                 
                 await Promise.race([uploadPromise, timeoutPromise]);
 
-                window.showNotification('대문 사진이 성공적으로 변경되었습니다.');
+                window.showNotification('대문 사진이 교체되었습니다.\n(다음 변경 전까지 영구 유지됩니다.)');
             } catch (error) {
-                console.error("Hero Upload failed", error);
-                window.showNotification(error.message || "대문 사진 교체에 실패했습니다.", true);
+                console.error("Hero Upload failed:", error);
+                window.showNotification("대문 사진 교체 실패: " + error.message, true);
             } finally {
                 uploadBtn.innerHTML = originalText;
                 uploadBtn.style.pointerEvents = 'auto';
@@ -321,7 +338,7 @@
             }
         };
 
-        // 갤러리 업로드 관련
+        // 갤러리 업로드 창 관리
         window.openGalleryUploadModal = function(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -337,7 +354,7 @@
             document.getElementById('gallery-upload-modal').classList.add('hidden');
         };
 
-        // 갤러리 사진 최종 업로드 (상태 텍스트 추가 & 타임아웃 8초 제한)
+        // 7. 갤러리 업로드 실행 (10초 강제 에러 처리)
         window.confirmGalleryUpload = async function() {
             if (!pendingGalleryFile || !db) return;
 
@@ -349,28 +366,28 @@
             submitBtn.disabled = true;
 
             try {
-                if (auth && !auth.currentUser) throw new Error("인증되지 않았습니다. 새로고침 해주세요.");
+                if (auth && !auth.currentUser) throw new Error("네트워크 연결이 끊겼습니다.");
 
                 const base64Image = await window.resizeImage(pendingGalleryFile, 800);
                 
                 submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>전송 중...';
-                const galleryRef = collection(db, 'artifacts', appId, 'public', 'data', 'gallery');
                 
+                const galleryRef = collection(db, 'artifacts', appId, 'public', 'data', 'gallery');
                 const uploadPromise = addDoc(galleryRef, {
                     imageUrl: base64Image,
                     description: description,
-                    timestamp: window.serverTimestamp()
+                    timestamp: serverTimestamp()
                 });
 
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("서버 응답 지연 (네트워크 방화벽 등 확인)")), 8000));
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("응답 시간 초과")), 10000));
                 
                 await Promise.race([uploadPromise, timeoutPromise]);
 
                 window.showNotification('사진과 내용이 성공적으로 업로드 되었습니다.');
                 window.closeGalleryUploadModal();
             } catch (error) {
-                console.error("Gallery Upload failed", error);
-                window.showNotification(error.message || "사진 업로드에 실패했습니다.", true);
+                console.error("Gallery Upload failed:", error);
+                window.showNotification("업로드 실패: " + error.message, true);
             } finally {
                 submitBtn.innerHTML = originalText;
                 submitBtn.disabled = false;
@@ -464,12 +481,13 @@
 
     <!-- 히어로 섹션 -->
     <div class="relative w-full h-[500px] flex items-center justify-center overflow-hidden group">
-        <img id="hero-image" src="IMG_1401.jpg" onerror="this.src='https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?q=80&w=2070&auto=format&fit=crop'" alt="참마음배드민턴클럽 단체사진" class="absolute inset-0 w-full h-full object-cover object-center z-0 transition-all duration-700">
+        <!-- 기본 이미지: IMG_1401.jpg, 데이터베이스에 덮어쓴 사진이 있으면 무조건 그것이 표시됨 -->
+        <img id="hero-image" src="IMG_1401.jpg" onerror="this.src='https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?q=80&w=2070&auto=format&fit=crop'" alt="참마음배드민턴클럽 대문사진" class="absolute inset-0 w-full h-full object-cover object-center z-0 transition-all duration-700">
         
         <div id="hero-admin-section" class="absolute top-4 right-4 z-50 hidden">
             <input type="file" id="hero-upload" accept="image/*" class="hidden" onchange="window.handleHeroUpload(event)">
             <label for="hero-upload" id="hero-upload-label" class="cursor-pointer bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-xl flex items-center border-2 border-white">
-                <i class="fas fa-camera mr-2"></i>대문 사진 변경
+                <i class="fas fa-camera mr-2"></i>대문 사진 교체
             </label>
         </div>
 
@@ -599,7 +617,7 @@
                 </div>
             </div>
 
-            <!-- 사진 그리드 -->
+            <!-- 사진 그리드 (무한 로딩 방지 적용) -->
             <div id="gallery-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <div class="col-span-full flex justify-center py-10">
                     <i class="fas fa-circle-notch fa-spin text-3xl text-blue-500"></i>
@@ -672,7 +690,7 @@
         </button>
     </footer>
 
-    <!-- 플로팅 알림창 (alert 대체용으로 z-index 최상위 설정) -->
+    <!-- 플로팅 알림창 -->
     <div id="notification" class="fixed bottom-5 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl transition-all duration-300 translate-y-full opacity-0 z-[100] text-center whitespace-pre-line max-w-sm w-max break-words font-medium">
         알림 메시지
     </div>
