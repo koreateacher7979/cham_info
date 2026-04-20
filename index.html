@@ -60,18 +60,26 @@
             window.reloadSheetData();
         };
 
-        // 구글 스크립트 데이터 처리 (대문 사진 정렬 위치 적용 포함)
-        window.handleGoogleSheetData = function(data) {
+        // 구글 스크립트 데이터 처리 (캐싱 기능 적용하여 즉시 로딩되도록 개선)
+        window.handleGoogleSheetData = function(data, isCache = false) {
             const galleryContainer = document.getElementById('gallery-grid');
             if (!data) return;
+
+            // 서버에서 받아온 최신 데이터라면 브라우저 로컬 저장소에 캐싱(저장)
+            if (!isCache) {
+                localStorage.setItem('clubCachedData', JSON.stringify(data));
+            }
 
             if (data.password) sheetAdminPassword = data.password.toString();
 
             // 대문 사진 및 정렬 위치 세팅
             if (data.heroUrl) {
                 const heroImg = document.getElementById('hero-image');
-                heroImg.src = data.heroUrl;
-                heroImg.style.objectPosition = data.heroAlignment || 'center'; // 선택한 위치 적용
+                // 기존 이미지가 있고 동일하면 깜빡임 방지
+                if (heroImg.src !== data.heroUrl) {
+                    heroImg.src = data.heroUrl;
+                }
+                heroImg.style.objectPosition = data.heroAlignment || 'center'; 
             }
 
             if (galleryContainer) {
@@ -89,14 +97,25 @@
                                  <p class="text-white text-sm font-medium drop-shadow-md truncate">${item.desc}</p>
                                </div>` 
                             : '';
-                        imgEl.innerHTML = `<img src="${item.url}" alt="클럽 사진" class="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500">${descriptionHtml}`;
+                        imgEl.innerHTML = `<img src="${item.url}" alt="클럽 사진" loading="lazy" class="w-full h-full object-contain group-hover:scale-105 transition-transform duration-500">${descriptionHtml}`;
                         galleryContainer.appendChild(imgEl);
                     });
                 }
             }
         };
 
-        window.addEventListener('DOMContentLoaded', fetchExternalData);
+        window.addEventListener('DOMContentLoaded', () => {
+            // 1. 브라우저 캐시 확인: 예전에 받아둔 대문사진/갤러리가 있으면 기다리지 않고 "즉시" 렌더링
+            const cachedData = localStorage.getItem('clubCachedData');
+            if (cachedData) {
+                try {
+                    window.handleGoogleSheetData(JSON.parse(cachedData), true);
+                } catch (e) { console.log("캐시 데이터 읽기 실패"); }
+            }
+
+            // 2. 뒤에서 조용히 최신 데이터 갱신
+            fetchExternalData();
+        });
 
         // 이미지 압축 알고리즘
         window.resizeImage = function(file, maxSize) {
