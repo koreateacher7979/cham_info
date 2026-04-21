@@ -14,8 +14,8 @@
         let pendingGalleryFile = null; 
         let pendingHeroFile = null;
 
-        // 👇👇👇 구글 웹앱 URL (회원님의 URL이 맞는지 다시 한번 꼭 확인해 주세요!) 👇👇👇
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzE8_WDQWOWhGPYG-yPicLsznQI4ENcXrdLsaYOloPDPX6bspMvpyBnvgIiw2FV9iI/exec";
+        // 👇👇👇 구글 웹앱 URL (회원님의 최신 배포 URL을 입력하세요!) 👇👇👇
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyMMztd8GLVxPU7HLsTBa1zIKqDAYBobcBlK1hmIeKQ0lGVUWCZTS6y4V3QECJG8tY/exec";
 
         // 알림 메시지 표시
         window.showNotification = function(msg, isError = false) {
@@ -26,7 +26,7 @@
             setTimeout(() => { noti.classList.add('translate-y-full', 'opacity-0'); }, 3500);
         };
 
-        // 데이터 새로고침 함수
+        // 데이터 새로고침 함수 (CORS 우회 JSONP)
         window.reloadSheetData = function() {
             if (GOOGLE_SCRIPT_URL === "" || GOOGLE_SCRIPT_URL.includes("여기에_웹앱_URL")) return;
             const script = document.createElement('script');
@@ -34,7 +34,7 @@
             document.body.appendChild(script);
         };
 
-        // 외부 데이터(회원수 및 구글시트 데이터) 가져오기
+        // 외부 데이터(회원수) 가져오기
         window.fetchExternalData = async function() {
             try {
                 const response = await fetch('https://koreateacher7979.github.io/chambadminton/');
@@ -60,17 +60,19 @@
             window.reloadSheetData();
         };
 
-        // 구글 스크립트 데이터 처리 (캐싱 기능 포함)
+        // 구글 스크립트 데이터 처리 (캐싱 기능 포함하여 화면 렌더링)
         window.handleGoogleSheetData = function(data, isCache = false) {
             const galleryContainer = document.getElementById('gallery-grid');
             if (!data) return;
 
+            // 받아온 최신 데이터를 브라우저에 캐싱
             if (!isCache) {
                 localStorage.setItem('clubCachedData', JSON.stringify(data));
             }
 
             if (data.password) sheetAdminPassword = data.password.toString();
 
+            // 대문 사진 적용
             if (data.heroUrl) {
                 const heroImg = document.getElementById('hero-image');
                 if (heroImg.src !== data.heroUrl) {
@@ -79,6 +81,7 @@
                 heroImg.style.objectPosition = data.heroAlignment || 'center'; 
             }
 
+            // 갤러리 적용
             if (galleryContainer) {
                 galleryContainer.innerHTML = '';
                 if (!data.gallery || data.gallery.length === 0) {
@@ -101,7 +104,9 @@
             }
         };
 
+        // 페이지 초기 로드
         window.addEventListener('DOMContentLoaded', () => {
+            // 캐시 데이터가 있으면 서버 통신 전 즉시 렌더링
             const cachedData = localStorage.getItem('clubCachedData');
             if (cachedData) {
                 try {
@@ -111,7 +116,7 @@
             fetchExternalData();
         });
 
-        // 이미지 초강력 압축 (용량 초과 및 전송 실패 완벽 방지)
+        // 이미지 초강력 압축 (용량 초과 방지)
         window.resizeImage = function(file, maxSize) {
             return new Promise((resolve, reject) => {
                 if (!file) { reject(new Error("파일이 없습니다.")); return; }
@@ -130,7 +135,6 @@
                             canvas.width = width; canvas.height = height;
                             const ctx = canvas.getContext('2d');
                             ctx.drawImage(img, 0, 0, width, height);
-                            // 전송률 100%를 위해 품질을 0.5로 대폭 압축
                             resolve(canvas.toDataURL('image/jpeg', 0.5));
                         } catch(err) { reject(new Error("이미지 처리 실패")); }
                     };
@@ -196,7 +200,7 @@
             document.getElementById('hero-upload-modal').classList.add('hidden');
         };
 
-        // 대문 사진 최종 업로드 (15초 타임아웃 추가)
+        // 대문 사진 최종 업로드
         window.confirmHeroUpload = async function() {
             if (!pendingHeroFile) return;
 
@@ -215,11 +219,9 @@
             submitBtn.disabled = true;
 
             try {
-                // 대문 사진 사이즈를 800px로 줄여 무한로딩 근본 차단
                 const base64Image = await window.resizeImage(pendingHeroFile, 800); 
                 submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>서버 전송 중...';
 
-                // 15초 타임아웃 설정 (무한로딩 방어)
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -235,14 +237,13 @@
                 window.showNotification('대문 사진 전송 성공!\n화면 갱신을 기다려주세요.');
                 window.closeHeroUploadModal();
                 
-                // 임시 대기 상태 표시 후 데이터 새로고침
                 setTimeout(() => { window.reloadSheetData(); }, 3500); 
             } catch (error) {
                 console.error("Hero Upload failed:", error);
                 if (error.name === 'AbortError') {
                     window.showNotification("전송 시간 초과: 인터넷 환경을 확인해주세요.", true);
                 } else {
-                    window.showNotification("교체 실패: 앱스 스크립트 배포 권한(모든 사용자)을 확인하세요.", true);
+                    window.showNotification("교체 실패: 앱스 스크립트 배포 권한을 확인하세요.", true);
                 }
             } finally {
                 submitBtn.innerHTML = originalText;
@@ -267,7 +268,7 @@
             document.getElementById('gallery-upload-modal').classList.add('hidden');
         };
 
-        // 갤러리 사진 최종 업로드 (15초 타임아웃 추가)
+        // 갤러리 사진 최종 업로드
         window.confirmGalleryUpload = async function() {
             if (!pendingGalleryFile) return;
 
@@ -284,7 +285,6 @@
             submitBtn.disabled = true;
 
             try {
-                // 갤러리 사진은 600px로 줄여 전송 성공률 보장
                 const base64Image = await window.resizeImage(pendingGalleryFile, 600);
                 submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>구글 드라이브 전송 중...';
                 
@@ -303,7 +303,6 @@
                 window.showNotification('사진 전송 성공!\n화면 갱신을 기다려주세요.');
                 window.closeGalleryUploadModal();
                 
-                // 갤러리에 스피너를 보여주어 새로고침 중임을 명확히 표시
                 const galleryContainer = document.getElementById('gallery-grid');
                 if(galleryContainer) {
                     galleryContainer.innerHTML = '<div class="col-span-full flex flex-col items-center py-10"><i class="fas fa-circle-notch fa-spin text-3xl text-blue-500 mb-3"></i><p class="text-slate-500 text-sm">최신 데이터를 불러오는 중...</p></div>';
@@ -313,9 +312,9 @@
             } catch (error) {
                 console.error("Gallery Upload failed:", error);
                 if (error.name === 'AbortError') {
-                    window.showNotification("전송 시간 초과: 파일 용량이 너무 크거나 인터넷이 느립니다.", true);
+                    window.showNotification("전송 시간 초과: 파일 용량이 크거나 인터넷이 느립니다.", true);
                 } else {
-                    window.showNotification("업로드 실패: 앱스 스크립트 배포 권한(모든 사용자)을 확인하세요.", true);
+                    window.showNotification("업로드 실패: 앱스 스크립트 권한을 확인하세요.", true);
                 }
             } finally {
                 submitBtn.innerHTML = originalText;
@@ -408,7 +407,30 @@
 
     <!-- 히어로 섹션 -->
     <div class="relative w-full h-[500px] flex items-center justify-center overflow-hidden group">
-        <img id="hero-image" src="IMG_1401.jpg" onerror="this.src='https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?q=80&w=2070&auto=format&fit=crop'" alt="참마음배드민턴클럽 대문사진" class="absolute inset-0 w-full h-full object-cover object-center z-0 transition-all duration-700">
+        <!-- 💡수정됨: 캐시를 즉시 읽어와 이미지를 렌더링하는 로직 (깜빡임 차단) -->
+        <img id="hero-image" alt="참마음배드민턴클럽 대문사진" class="absolute inset-0 w-full h-full object-cover object-center z-0 transition-all duration-700">
+        <script>
+            (function() {
+                let initialHeroSrc = "IMG_1401.jpg";
+                let initialHeroAlign = "center";
+                try {
+                    const cachedData = localStorage.getItem('clubCachedData');
+                    if (cachedData) {
+                        const data = JSON.parse(cachedData);
+                        if (data.heroUrl) initialHeroSrc = data.heroUrl;
+                        if (data.heroAlignment) initialHeroAlign = data.heroAlignment;
+                    }
+                } catch(e) {}
+                
+                const heroImage = document.getElementById('hero-image');
+                heroImage.style.objectPosition = initialHeroAlign;
+                heroImage.onerror = function() {
+                    this.onerror = null; 
+                    this.src = 'https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?q=80&w=2070&auto=format&fit=crop';
+                };
+                heroImage.src = initialHeroSrc;
+            })();
+        </script>
         
         <div id="hero-admin-section" class="absolute top-4 right-4 z-50 hidden">
             <input type="file" id="hero-upload" accept="image/*" class="hidden" onchange="window.openHeroUploadModal(event)">
