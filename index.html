@@ -12,10 +12,10 @@
         let isAdmin = false;
         let sheetAdminPassword = "1234"; 
         let pendingGalleryFile = null; 
-        let pendingHeroFile = null; // 대문 사진 대기용 변수 추가
+        let pendingHeroFile = null;
 
-        // 구글 웹앱 URL (설정된 URL 유지)
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyZgXcFWG0_zxpxV4pdcPZ3rKn7csToLPdQrOPHsmUfyqch4viB0G-26-R7vHFQemI/exec";
+        // 👇👇👇 구글 웹앱 URL (회원님의 URL이 맞는지 다시 한번 꼭 확인해 주세요!) 👇👇👇
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzE8_WDQWOWhGPYG-yPicLsznQI4ENcXrdLsaYOloPDPX6bspMvpyBnvgIiw2FV9iI/exec";
 
         // 알림 메시지 표시
         window.showNotification = function(msg, isError = false) {
@@ -60,22 +60,19 @@
             window.reloadSheetData();
         };
 
-        // 구글 스크립트 데이터 처리 (캐싱 기능 적용하여 즉시 로딩되도록 개선)
+        // 구글 스크립트 데이터 처리 (캐싱 기능 포함)
         window.handleGoogleSheetData = function(data, isCache = false) {
             const galleryContainer = document.getElementById('gallery-grid');
             if (!data) return;
 
-            // 서버에서 받아온 최신 데이터라면 브라우저 로컬 저장소에 캐싱(저장)
             if (!isCache) {
                 localStorage.setItem('clubCachedData', JSON.stringify(data));
             }
 
             if (data.password) sheetAdminPassword = data.password.toString();
 
-            // 대문 사진 및 정렬 위치 세팅
             if (data.heroUrl) {
                 const heroImg = document.getElementById('hero-image');
-                // 기존 이미지가 있고 동일하면 깜빡임 방지
                 if (heroImg.src !== data.heroUrl) {
                     heroImg.src = data.heroUrl;
                 }
@@ -105,19 +102,16 @@
         };
 
         window.addEventListener('DOMContentLoaded', () => {
-            // 1. 브라우저 캐시 확인: 예전에 받아둔 대문사진/갤러리가 있으면 기다리지 않고 "즉시" 렌더링
             const cachedData = localStorage.getItem('clubCachedData');
             if (cachedData) {
                 try {
                     window.handleGoogleSheetData(JSON.parse(cachedData), true);
                 } catch (e) { console.log("캐시 데이터 읽기 실패"); }
             }
-
-            // 2. 뒤에서 조용히 최신 데이터 갱신
             fetchExternalData();
         });
 
-        // 이미지 압축 알고리즘
+        // 이미지 초강력 압축 (용량 초과 및 전송 실패 완벽 방지)
         window.resizeImage = function(file, maxSize) {
             return new Promise((resolve, reject) => {
                 if (!file) { reject(new Error("파일이 없습니다.")); return; }
@@ -136,7 +130,8 @@
                             canvas.width = width; canvas.height = height;
                             const ctx = canvas.getContext('2d');
                             ctx.drawImage(img, 0, 0, width, height);
-                            resolve(canvas.toDataURL('image/jpeg', 0.6));
+                            // 전송률 100%를 위해 품질을 0.5로 대폭 압축
+                            resolve(canvas.toDataURL('image/jpeg', 0.5));
                         } catch(err) { reject(new Error("이미지 처리 실패")); }
                     };
                     img.src = e.target.result;
@@ -179,20 +174,17 @@
             }
         };
 
-        // 대문 사진 업로드 창 띄우기 (위치 지정 기능 추가)
+        // 대문 사진 업로드 창 띄우기
         window.openHeroUploadModal = function(event) {
             const file = event.target.files[0];
             if (!file) return;
             pendingHeroFile = file;
 
-            // 선택한 이미지를 미리보기 화면에 렌더링
             const reader = new FileReader();
             reader.onload = function(e) {
                 document.getElementById('hero-preview-image').src = e.target.result;
-                // 기본값 중앙 맞춤으로 초기화
                 document.querySelector('input[name="hero-alignment"][value="center"]').checked = true;
                 document.getElementById('hero-preview-image').style.objectPosition = 'center';
-                
                 document.getElementById('hero-upload-modal').classList.remove('hidden');
             };
             reader.readAsDataURL(file);
@@ -204,11 +196,15 @@
             document.getElementById('hero-upload-modal').classList.add('hidden');
         };
 
-        // 대문 사진 최종 업로드
+        // 대문 사진 최종 업로드 (15초 타임아웃 추가)
         window.confirmHeroUpload = async function() {
             if (!pendingHeroFile) return;
 
-            // 선택한 정렬 위치 값 가져오기
+            if (GOOGLE_SCRIPT_URL === "" || GOOGLE_SCRIPT_URL.includes("여기에_웹앱_URL")) {
+                window.showNotification("오류: 구글 웹앱 URL이 올바르게 설정되지 않았습니다.", true);
+                return;
+            }
+
             const alignmentNode = document.querySelector('input[name="hero-alignment"]:checked');
             const alignment = alignmentNode ? alignmentNode.value : 'center';
 
@@ -219,23 +215,35 @@
             submitBtn.disabled = true;
 
             try {
-                const base64Image = await window.resizeImage(pendingHeroFile, 1000); 
-                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>업로드 중...';
+                // 대문 사진 사이즈를 800px로 줄여 무한로딩 근본 차단
+                const base64Image = await window.resizeImage(pendingHeroFile, 800); 
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>서버 전송 중...';
+
+                // 15초 타임아웃 설정 (무한로딩 방어)
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
 
                 await fetch(GOOGLE_SCRIPT_URL, {
                     method: 'POST',
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'text/plain' },
-                    // 정렬 정보(alignment) 함께 서버로 전송
-                    body: JSON.stringify({ action: 'uploadHero', image: base64Image, alignment: alignment })
+                    body: JSON.stringify({ action: 'uploadHero', image: base64Image, alignment: alignment }),
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
 
-                window.showNotification('대문 사진 교체가 완료되었습니다.\n(서버 반영에 약간의 시간이 소요됩니다.)');
+                window.showNotification('대문 사진 전송 성공!\n화면 갱신을 기다려주세요.');
                 window.closeHeroUploadModal();
-                setTimeout(() => { window.reloadSheetData(); }, 3000); // 3초 후 데이터 새로고침
+                
+                // 임시 대기 상태 표시 후 데이터 새로고침
+                setTimeout(() => { window.reloadSheetData(); }, 3500); 
             } catch (error) {
                 console.error("Hero Upload failed:", error);
-                window.showNotification("대문 사진 교체에 실패했습니다. 네트워크를 확인해주세요.", true);
+                if (error.name === 'AbortError') {
+                    window.showNotification("전송 시간 초과: 인터넷 환경을 확인해주세요.", true);
+                } else {
+                    window.showNotification("교체 실패: 앱스 스크립트 배포 권한(모든 사용자)을 확인하세요.", true);
+                }
             } finally {
                 submitBtn.innerHTML = originalText;
                 submitBtn.disabled = false;
@@ -259,9 +267,14 @@
             document.getElementById('gallery-upload-modal').classList.add('hidden');
         };
 
-        // 갤러리 사진 최종 업로드
+        // 갤러리 사진 최종 업로드 (15초 타임아웃 추가)
         window.confirmGalleryUpload = async function() {
             if (!pendingGalleryFile) return;
+
+            if (GOOGLE_SCRIPT_URL === "" || GOOGLE_SCRIPT_URL.includes("여기에_웹앱_URL")) {
+                window.showNotification("오류: 구글 웹앱 URL이 올바르게 설정되지 않았습니다.", true);
+                return;
+            }
 
             const description = document.getElementById('gallery-desc-input').value;
             const submitBtn = document.getElementById('gallery-submit-btn');
@@ -271,22 +284,39 @@
             submitBtn.disabled = true;
 
             try {
-                const base64Image = await window.resizeImage(pendingGalleryFile, 800);
-                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>드라이브 전송 중...';
+                // 갤러리 사진은 600px로 줄여 전송 성공률 보장
+                const base64Image = await window.resizeImage(pendingGalleryFile, 600);
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>구글 드라이브 전송 중...';
                 
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
+
                 await fetch(GOOGLE_SCRIPT_URL, {
                     method: 'POST',
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify({ action: 'uploadGallery', image: base64Image, description: description })
+                    body: JSON.stringify({ action: 'uploadGallery', image: base64Image, description: description }),
+                    signal: controller.signal
                 });
+                clearTimeout(timeoutId);
 
-                window.showNotification('사진이 구글 드라이브에 업로드되었습니다.\n(잠시 후 화면이 갱신됩니다.)');
+                window.showNotification('사진 전송 성공!\n화면 갱신을 기다려주세요.');
                 window.closeGalleryUploadModal();
-                setTimeout(() => { window.reloadSheetData(); }, 3000); 
+                
+                // 갤러리에 스피너를 보여주어 새로고침 중임을 명확히 표시
+                const galleryContainer = document.getElementById('gallery-grid');
+                if(galleryContainer) {
+                    galleryContainer.innerHTML = '<div class="col-span-full flex flex-col items-center py-10"><i class="fas fa-circle-notch fa-spin text-3xl text-blue-500 mb-3"></i><p class="text-slate-500 text-sm">최신 데이터를 불러오는 중...</p></div>';
+                }
+
+                setTimeout(() => { window.reloadSheetData(); }, 3500); 
             } catch (error) {
                 console.error("Gallery Upload failed:", error);
-                window.showNotification("업로드 실패: 네트워크 상태를 확인해주세요.", true);
+                if (error.name === 'AbortError') {
+                    window.showNotification("전송 시간 초과: 파일 용량이 너무 크거나 인터넷이 느립니다.", true);
+                } else {
+                    window.showNotification("업로드 실패: 앱스 스크립트 배포 권한(모든 사용자)을 확인하세요.", true);
+                }
             } finally {
                 submitBtn.innerHTML = originalText;
                 submitBtn.disabled = false;
@@ -378,11 +408,9 @@
 
     <!-- 히어로 섹션 -->
     <div class="relative w-full h-[500px] flex items-center justify-center overflow-hidden group">
-        <!-- object-position 속성을 JS에서 동적으로 컨트롤 -->
         <img id="hero-image" src="IMG_1401.jpg" onerror="this.src='https://images.unsplash.com/photo-1626224583764-f87db24ac4ea?q=80&w=2070&auto=format&fit=crop'" alt="참마음배드민턴클럽 대문사진" class="absolute inset-0 w-full h-full object-cover object-center z-0 transition-all duration-700">
         
         <div id="hero-admin-section" class="absolute top-4 right-4 z-50 hidden">
-            <!-- 변경점: window.openHeroUploadModal 로 호출 변경 -->
             <input type="file" id="hero-upload" accept="image/*" class="hidden" onchange="window.openHeroUploadModal(event)">
             <label for="hero-upload" id="hero-upload-label" class="cursor-pointer bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-xl flex items-center border-2 border-white">
                 <i class="fas fa-camera mr-2"></i>대문 사진 교체
@@ -515,7 +543,7 @@
                 </div>
             </div>
 
-            <!-- 사진 그리드 (구글 시트 연동 데이터 렌더링 영역) -->
+            <!-- 사진 그리드 -->
             <div id="gallery-grid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                 <div class="col-span-full flex justify-center py-10">
                     <i class="fas fa-circle-notch fa-spin text-3xl text-blue-500"></i>
@@ -607,18 +635,16 @@
         </div>
     </div>
 
-    <!-- 신규: 대문 사진 업로드 위치 선택 모달 -->
+    <!-- 대문 사진 업로드 위치 선택 모달 -->
     <div id="hero-upload-modal" class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center backdrop-blur-sm" onclick="window.closeHeroUploadModal()">
         <div class="bg-white rounded-xl shadow-2xl p-8 max-w-lg w-full mx-4" onclick="event.stopPropagation()">
             <h3 class="text-xl font-bold text-slate-800 mb-2">대문 사진 업로드</h3>
             <p class="text-sm text-slate-500 mb-4">화면에 보여질 이미지의 기준 위치를 선택해주세요.</p>
 
-            <!-- 미리보기 영역 -->
             <div class="w-full h-[200px] relative rounded-lg overflow-hidden mb-5 border border-slate-200">
                 <img id="hero-preview-image" src="" class="absolute inset-0 w-full h-full object-cover">
             </div>
 
-            <!-- 정렬 선택 버튼들 -->
             <div class="flex gap-5 mb-6 justify-center">
                 <label class="flex items-center gap-2 cursor-pointer font-medium text-slate-700">
                     <input type="radio" name="hero-alignment" value="top" onchange="document.getElementById('hero-preview-image').style.objectPosition='top'"> 상단 맞춤
